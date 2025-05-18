@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>United Next Interior Checker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>United Next Interior Checker</h1>
+        
+        <!-- Flight Search Form -->
+        <div class="search-form">
+            <h2>Step 1: Find Aircraft Identifier</h2>
+            <div class="form-group">
+                <label for="flightNumber">Flight Number (Optional)</label>
+                <input type="text" id="flightNumber" placeholder="Enter flight number (e.g., UA2418)">
+                <small style="color: var(--united-gray);">Leave blank to see all flights on this route</small>
+            </div>
+            <div class="form-group">
+                <label for="departureAirport">Departure Airport</label>
+                <input type="text" id="departureAirport" placeholder="Enter departure airport code (e.g., SFO)" required maxlength="3">
+            </div>
+            <div class="form-group">
+                <label for="arrivalAirport">Arrival Airport</label>
+                <input type="text" id="arrivalAirport" placeholder="Enter arrival airport code (e.g., LAX)" required maxlength="3">
+            </div>
+            <div class="form-group">
+                <label for="date">Flight Date</label>
+                <input type="date" id="date" required>
+            </div>
+            <button id="findFlightButton">Find Aircraft Identifier</button>
+        </div>
+
+        <!-- Aircraft Interior Check Form -->
+        <div class="search-form" style="margin-top: 2rem;">
+            <h2>Step 2: Check Aircraft Interior</h2>
+            <div class="form-group">
+                <label for="aircraftId">Aircraft Identifier</label>
+                <input type="text" id="aircraftId" placeholder="Enter 4-digit aircraft ID" required maxlength="4" pattern="[0-9]{4}">
+                <small style="color: var(--united-gray);">Found under "Aircraft Details" on United's flight status page</small>
+            </div>
+            <button id="checkInteriorButton">Check Interior</button>
+        </div>
+
+        <div class="results-container">
+            <div id="loading" class="loading hidden">
+                <div class="spinner"></div>
+                <p>Checking aircraft interior...</p>
+            </div>
+            <div id="results" class="results"></div>
+        </div>
+    </div>
+    <script src="client.js"></script>
+</body>
+</html>
