@@ -8,6 +8,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const checkInteriorButton = document.getElementById('checkInteriorButton');
     const resultsDiv = document.getElementById('results');
     const loadingDiv = document.getElementById('loading');
+    
+    // Cache for API responses to minimize server requests
+    const apiCache = {
+        get: (key) => {
+            try {
+                const cachedItem = localStorage.getItem(`api_cache_${key}`);
+                if (!cachedItem) return null;
+                
+                const { data, expiry } = JSON.parse(cachedItem);
+                if (Date.now() > expiry) {
+                    localStorage.removeItem(`api_cache_${key}`);
+                    return null;
+                }
+                return data;
+            } catch (e) {
+                console.warn('Cache retrieval error:', e);
+                return null;
+            }
+        },
+        set: (key, data, ttlMinutes = 30) => {
+            try {
+                const expiry = Date.now() + (ttlMinutes * 60 * 1000);
+                localStorage.setItem(`api_cache_${key}`, JSON.stringify({ data, expiry }));
+            } catch (e) {
+                console.warn('Cache storage error:', e);
+            }
+        }
+    };
 
     // Set minimum date to today and maximum to 2 days in the future
     const today = new Date();
@@ -49,9 +77,19 @@ document.addEventListener('DOMContentLoaded', () => {
     findFlightButton.addEventListener('click', findFlight);
     checkInteriorButton.addEventListener('click', checkInterior);
 
-    // Show error message
-    function showError(message) {
-        resultsDiv.innerHTML = `<div class="error-message">${message}</div>`;
+    // Show error message with possible solutions
+    function showError(message, suggestions = []) {
+        let errorHtml = `<div class="error-message">${message}</div>`;
+        
+        if (suggestions.length > 0) {
+            errorHtml += '<div class="error-suggestions"><h4>Suggestions:</h4><ul>';
+            suggestions.forEach(suggestion => {
+                errorHtml += `<li>${suggestion}</li>`;
+            });
+            errorHtml += '</ul></div>';
+        }
+        
+        resultsDiv.innerHTML = errorHtml;
         loadingDiv.classList.add('hidden');
     }
 
@@ -60,6 +98,39 @@ document.addEventListener('DOMContentLoaded', () => {
         loadingDiv.querySelector('p').textContent = message;
         loadingDiv.classList.remove('hidden');
         resultsDiv.innerHTML = '';
+    }
+
+    // Retry mechanism for API calls
+    async function fetchWithRetry(url, options, maxRetries = 2) {
+        let retries = 0;
+        
+        while (retries <= maxRetries) {
+            try {
+                const response = await fetch(url, options);
+                
+                // If we get a 429 (Too Many Requests) or 503 (Service Unavailable), retry
+                if (response.status === 429 || response.status === 503) {
+                    retries++;
+                    if (retries > maxRetries) break;
+                    
+                    // Exponential backoff with jitter
+                    const delay = Math.min(Math.pow(2, retries) * 500 + Math.random() * 300, 5000);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
+                
+                return response;
+            } catch (error) {
+                retries++;
+                if (retries > maxRetries) throw error;
+                
+                // Exponential backoff for connection errors
+                const delay = Math.min(Math.pow(2, retries) * 500, 5000);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+        
+        throw new Error('Maximum retries reached');
     }
 
     async function findFlight() {
@@ -85,10 +156,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Show loading state
         showLoading('Fetching aircraft identifier...');
+        
+        // Generate cache key
+        const cacheKey = `flight_${flightNumber}_${date}_${departureAirport}_${arrivalAirport}`;
+        
+        // Check cache first
+        const cachedData = apiCache.get(cacheKey);
+        if (cachedData) {
+            console.log('Using cached aircraft data');
+            
+            // Auto-fill the aircraft ID input
+            aircraftIdInput.value = cachedData.aircraftId;
+            
+            // Automatically check the interior
+            checkInterior();
+            
+            // Show success message
+            resultsDiv.innerHTML = `
+                <div class="success-message">
+                    <div>Found aircraft ID: ${cachedData.aircraftId}</div>
+                    <div class="cached-info">(Cached data)</div>
+                </div>`;
+            
+            loadingDiv.classList.add('hidden');
+            return;
+        }
 
         try {
             // Call our new API endpoint to get the aircraft ID
-            const response = await fetch('/api/get-aircraft-id', {
+            const response = await fetchWithRetry('/api/get-aircraft-id', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -104,10 +200,20 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             
             if (!response.ok) {
-                throw new Error(data.error || 'Failed to retrieve aircraft identifier');
+                // Handle specific error cases
+                if (response.status === 429) {
+                    throw new Error('United.com is temporarily blocking our requests. Please try again in a few minutes.');
+                } else if (response.status === 403) {
+                    throw new Error('United.com has detected our automated system. Please try checking manually.');
+                } else {
+                    throw new Error(data.error || 'Failed to retrieve aircraft identifier');
+                }
             }
 
             if (data.aircraftId) {
+                // Save to cache for future use (valid for 30 minutes)
+                apiCache.set(cacheKey, data, 30);
+                
                 // Auto-fill the aircraft ID input
                 aircraftIdInput.value = data.aircraftId;
                 
@@ -116,21 +222,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Show success message
                 resultsDiv.innerHTML = `<div class="success-message">Found aircraft ID: ${data.aircraftId}</div>`;
+                
+                // After successful search, save it to recent searches
+                saveRecentSearch('flights', { 
+                    flightNumber, 
+                    fromAirport: departureAirport, 
+                    toAirport: arrivalAirport, 
+                    date 
+                });
             } else {
                 throw new Error('Aircraft identifier not found');
             }
         } catch (error) {
             console.error('Error fetching aircraft ID:', error);
-            showError(`Error: ${error.message}. You may need to check manually on United's website.`);
             
             // Construct URL for manual checking
             const flightNumberWithoutUA = flightNumber.replace(/^UA/i, '');
             const unitedUrl = `https://www.united.com/en/us/flightstatus/details/${flightNumberWithoutUA}/${date}/${departureAirport}/${arrivalAirport}/UA`;
             
-            // Add a link to check manually
-            resultsDiv.innerHTML += `<div class="manual-check">
-                <a href="${unitedUrl}" target="_blank">Check on United's website</a>
-            </div>`;
+            // Show error with suggestions
+            showError(`Error: ${error.message}`, [
+                'Try checking again in a few minutes',
+                'Make sure flight details are correct',
+                `<a href="${unitedUrl}" target="_blank" class="manual-link">Check directly on United's website</a>`,
+                'Enter the aircraft ID manually if you can find it'
+            ]);
+        } finally {
+            loadingDiv.classList.add('hidden');
         }
     }
 
@@ -147,11 +265,22 @@ document.addEventListener('DOMContentLoaded', () => {
             showError('Please enter a valid aircraft identifier (1-4 digits)');
             return;
         }
+        
+        // Generate cache key for interior data
+        const interiorCacheKey = `interior_${aircraftId}`;
+        
+        // Check cache first - aircraft interior data can be cached longer (2 hours)
+        const cachedInteriorData = apiCache.get(interiorCacheKey);
+        if (cachedInteriorData) {
+            console.log('Using cached interior data');
+            displayInteriorResults(cachedInteriorData, true);
+            return;
+        }
 
         showLoading('Checking aircraft interior...');
 
         try {
-            const response = await fetch('/api/check-interior', {
+            const response = await fetchWithRetry('/api/check-interior', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -167,74 +296,94 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             console.log("Response data:", data); // Debug log
             
-            // Show the returned message with styling
-            let html = '';
-            // Aircraft type mapping
-            const fleetMap = {
-                '19': 'Airbus A319',
-                '20': 'Airbus A320',
-                '21': 'Airbus A321neo',
-                '3G': 'Boeing 737-700',
-                '38': 'Boeing 737-800',
-                'M8': 'Boeing 737 MAX 8',
-                '39': 'Boeing 737-900',
-                'M9': 'Boeing 737 MAX 9',
-                '52': 'Boeing 757-200',
-                '53': 'Boeing 757-300',
-                '63/4': 'Boeing 767',
-                '72': 'Boeing 777-200',
-                '73': 'Boeing 777-300',
-                '88/X': 'Boeing 787 Dreamliner',
-                '89': 'Boeing 787-9 Dreamliner'
-            };
+            // Cache the interior data (valid for 2 hours)
+            apiCache.set(interiorCacheKey, data, 120);
             
-            if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-                // Only use the first result instead of mapping through all results
-                const result = data.results[0]; // Only use the first result
-                const type = fleetMap[result.fleetType] || result.fleetType;
-                const id = result.tail || aircraftId;
-                const reg = result.reg || '';
-                const regLink = reg ? `<a href="https://www.flightradar24.com/data/aircraft/${reg}#" target="_blank">${reg}</a>` : '';
-                if (result.hasNextInterior) {
-                    html = `<div class="interior-result green-border">
-                        <div class="interior-main">✨ Your aircraft has the new interior ✨</div>
-                        <div class="interior-details">${type} &middot; ID: ${id} &middot; Registration: ${regLink}</div>
-                    </div>`;
-                } else {
-                    html = `<div class="interior-result green-border">
-                        <div class="interior-main">Your aircraft has the standard interior</div>
-                        <div class="interior-details">${type} &middot; ID: ${id} &middot; Registration: ${regLink}</div>
-                    </div>`;
-                }
-            } else if (data.hasNextInterior !== undefined) {
-                const type = data.fleetType ? (fleetMap[data.fleetType] || data.fleetType) : '';
-                const id = data.tail || aircraftId;
-                const reg = data.reg || ''; 
-                const regLink = reg ? `<a href="https://www.flightradar24.com/data/aircraft/${reg}" target="_blank">${reg}</a>` : '';
-                if (data.hasNextInterior) {
-                    html = `<div class="interior-result green-border">
-                        <div class="interior-main">✨ Your aircraft has the new interior ✨</div>
-                        <div class="interior-details">${type} &middot; ID: ${id} &middot; Registration: ${regLink}</div>
-                    </div>`;
-                } else {
-                    html = `<div class="interior-result green-border">
-                        <div class="interior-main">Your aircraft has the standard interior</div>
-                        <div class="interior-details">${type} &middot; ID: ${id} &middot; Registration: ${regLink}</div>
-                    </div>`;
-                }
-            } else {
-                html = `<div class="interior-result green-border">${data.message}</div>`;
-            }
-            resultsDiv.innerHTML = `<div class="search-results">${html}</div>`;
+            // Display the results
+            displayInteriorResults(data);
             
             // After successful search, save it to recent searches
             saveRecentSearch('interiors', { aircraftId });
             
         } catch (error) {
-            showError(error.message || 'Error checking aircraft interior');
+            showError(error.message || 'Error checking aircraft interior', [
+                'Try refreshing the page',
+                'Make sure you entered the correct aircraft ID'
+            ]);
         } finally {
             loadingDiv.classList.add('hidden');
         }
+    }
+    
+    // Helper function to display interior results
+    function displayInteriorResults(data, isCached = false) {
+        // Aircraft type mapping
+        const fleetMap = {
+            '19': 'Airbus A319',
+            '20': 'Airbus A320',
+            '21': 'Airbus A321neo',
+            '3G': 'Boeing 737-700',
+            '38': 'Boeing 737-800',
+            'M8': 'Boeing 737 MAX 8',
+            '39': 'Boeing 737-900',
+            'M9': 'Boeing 737 MAX 9',
+            '52': 'Boeing 757-200',
+            '53': 'Boeing 757-300',
+            '63/4': 'Boeing 767',
+            '72': 'Boeing 777-200',
+            '73': 'Boeing 777-300',
+            '88/X': 'Boeing 787 Dreamliner',
+            '89': 'Boeing 787-9 Dreamliner'
+        };
+        
+        let html = '';
+        
+        if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+            // Only use the first result
+            const result = data.results[0];
+            const type = fleetMap[result.fleetType] || result.fleetType;
+            const id = result.tail || aircraftIdInput.value.trim();
+            const reg = result.reg || '';
+            const regLink = reg ? `<a href="https://www.flightradar24.com/data/aircraft/${reg}#" target="_blank">${reg}</a>` : '';
+            
+            const cachedLabel = isCached ? '<span class="cached-label">(Cached)</span>' : '';
+            
+            if (result.hasNextInterior) {
+                html = `<div class="interior-result green-border">
+                    <div class="interior-main">✨ Your aircraft has the new interior ✨ ${cachedLabel}</div>
+                    <div class="interior-details">${type} &middot; ID: ${id} &middot; Registration: ${regLink}</div>
+                </div>`;
+            } else {
+                html = `<div class="interior-result standard-border">
+                    <div class="interior-main">Your aircraft has the standard interior ${cachedLabel}</div>
+                    <div class="interior-details">${type} &middot; ID: ${id} &middot; Registration: ${regLink}</div>
+                </div>`;
+            }
+        } else if (data.hasNextInterior !== undefined) {
+            const type = data.fleetType ? (fleetMap[data.fleetType] || data.fleetType) : '';
+            const id = data.tail || aircraftIdInput.value.trim();
+            const reg = data.reg || ''; 
+            const regLink = reg ? `<a href="https://www.flightradar24.com/data/aircraft/${reg}" target="_blank">${reg}</a>` : '';
+            
+            const cachedLabel = isCached ? '<span class="cached-label">(Cached)</span>' : '';
+            
+            if (data.hasNextInterior) {
+                html = `<div class="interior-result green-border">
+                    <div class="interior-main">✨ Your aircraft has the new interior ✨ ${cachedLabel}</div>
+                    <div class="interior-details">${type} &middot; ID: ${id} &middot; Registration: ${regLink}</div>
+                </div>`;
+            } else {
+                html = `<div class="interior-result standard-border">
+                    <div class="interior-main">Your aircraft has the standard interior ${cachedLabel}</div>
+                    <div class="interior-details">${type} &middot; ID: ${id} &middot; Registration: ${regLink}</div>
+                </div>`;
+            }
+        } else {
+            html = `<div class="interior-result">${data.message || 'No data available for this aircraft'}</div>`;
+        }
+        
+        resultsDiv.innerHTML = `<div class="search-results">${html}</div>`;
+        loadingDiv.classList.add('hidden');
     }
 
     // Function to save recent searches
@@ -323,4 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Error updating recent searches UI:', error);
         }
     }
+    
+    // Initialize the UI by showing recent searches
+    updateRecentSearchesUI();
 });
