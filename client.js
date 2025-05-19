@@ -183,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            // Call our new API endpoint to get the aircraft ID
+            // Call our API endpoint to get the aircraft ID
             const response = await fetchWithRetry('/api/get-aircraft-id', {
                 method: 'POST',
                 headers: {
@@ -202,7 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) {
                 // Handle specific error cases
                 if (response.status === 429) {
-                    throw new Error('United.com is temporarily blocking our requests. Please try again in a few minutes.');
+                    throw new Error('United.com is temporarily blocking our requests. Please try checking manually or enter the aircraft ID directly.');
                 } else if (response.status === 403) {
                     throw new Error('United.com has detected our automated system. Please try checking manually.');
                 } else {
@@ -240,13 +240,28 @@ document.addEventListener('DOMContentLoaded', () => {
             const flightNumberWithoutUA = flightNumber.replace(/^UA/i, '');
             const unitedUrl = `https://www.united.com/en/us/flightstatus/details/${flightNumberWithoutUA}/${date}/${departureAirport}/${arrivalAirport}/UA`;
             
-            // Show error with suggestions
-            showError(`Error: ${error.message}`, [
-                'Try checking again in a few minutes',
-                'Make sure flight details are correct',
-                `<a href="${unitedUrl}" target="_blank" class="manual-link">Check directly on United's website</a>`,
-                'Enter the aircraft ID manually if you can find it'
+            // Provide helpful instructions for manual checking
+            const manualInstructions = `
+                <div class="manual-instructions">
+                    <h3>How to manually find your aircraft ID:</h3>
+                    <ol>
+                        <li>Click on "Check on United's website" below</li>
+                        <li>Look for "Aircraft Details" on the flight status page</li>
+                        <li>Find the number after the # symbol (e.g., #1234)</li>
+                        <li>Enter that number in the "Aircraft ID" field above</li>
+                        <li>Click "Check Interior" button</li>
+                    </ol>
+                </div>
+            `;
+            
+            // Show error with suggestions and manual instructions
+            showError(`${error.message}`, [
+                `<a href="${unitedUrl}" target="_blank" class="manual-link">Check on United's website</a>`,
+                'Enter the aircraft ID manually when you find it'
             ]);
+            
+            // Add the manual instructions after the error message
+            resultsDiv.innerHTML += manualInstructions;
         } finally {
             loadingDiv.classList.add('hidden');
         }
