@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showError(`Error: ${error.message}. You may need to check manually on United's website.`);
             
             // Construct URL for manual checking
-            const flightNumberWithoutUA = flightNumber.substring(2);
+            const flightNumberWithoutUA = flightNumber.replace(/^UA/i, '');
             const unitedUrl = `https://www.united.com/en/us/flightstatus/details/${flightNumberWithoutUA}/${date}/${departureAirport}/${arrivalAirport}/UA`;
             
             // Add a link to check manually
