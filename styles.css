@@ -5,6 +5,7 @@
     --united-light-gray: #F2F2F7;
     --united-blue-light: #e1efff;
     --united-gray-light: #f7f7f9;
+    --success-green: #4CAF50;
 }
 
 * {
@@ -365,4 +366,47 @@ input[type="date"]:focus {
     border-radius: 50%;
     margin-bottom: 1rem;
     animation: spin 1s linear infinite;
+}
+
+/* New feature highlight */
+.new-feature {
+    background-color: var(--united-gold);
+    color: var(--united-blue);
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    font-weight: 600;
+    text-align: center;
+}
+
+/* Success message */
+.success-message {
+    background-color: var(--success-green);
+    color: white;
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    text-align: center;
+    font-weight: 500;
+}
+
+/* Manual check link */
+.manual-check {
+    text-align: center;
+    margin: 16px 0;
+}
+
+.manual-check a {
+    display: inline-block;
+    background-color: var(--united-blue);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: 500;
+    transition: background-color 0.2s;
+}
+
+.manual-check a:hover {
+    background-color: #003366;
 }

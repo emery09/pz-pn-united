@@ -49,7 +49,20 @@ document.addEventListener('DOMContentLoaded', () => {
     findFlightButton.addEventListener('click', findFlight);
     checkInteriorButton.addEventListener('click', checkInterior);
 
-    function findFlight() {
+    // Show error message
+    function showError(message) {
+        resultsDiv.innerHTML = `<div class="error-message">${message}</div>`;
+        loadingDiv.classList.add('hidden');
+    }
+
+    // Show loading state with custom message
+    function showLoading(message = 'Processing...') {
+        loadingDiv.querySelector('p').textContent = message;
+        loadingDiv.classList.remove('hidden');
+        resultsDiv.innerHTML = '';
+    }
+
+    async function findFlight() {
         const flightNumber = flightNumberInput.value.trim();
         const departureAirport = departureAirportInput.value.trim();
         const arrivalAirport = arrivalAirportInput.value.trim();
@@ -65,16 +78,60 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Construct URL based on whether flight number is provided
-        let unitedUrl;
-        if (flightNumber) {
-            const flightNumberWithoutUA = flightNumber.substring(2);
-            unitedUrl = `https://www.united.com/en/us/flightstatus/details/${flightNumberWithoutUA}/${date}/${departureAirport}/${arrivalAirport}/UA`;
-        } else {
-            unitedUrl = `https://www.united.com/en/us/flightstatus/results/route/${date}/${departureAirport}/${arrivalAirport}/UA`;
+        if (!flightNumber || flightNumber.length <= 2) {
+            showError('Please enter a valid flight number');
+            return;
         }
-        
-        window.open(unitedUrl, '_blank');
+
+        // Show loading state
+        showLoading('Fetching aircraft identifier...');
+
+        try {
+            // Call our new API endpoint to get the aircraft ID
+            const response = await fetch('/api/get-aircraft-id', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 
+                    flightNumber, 
+                    date, 
+                    departureAirport, 
+                    arrivalAirport 
+                })
+            });
+
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to retrieve aircraft identifier');
+            }
+
+            if (data.aircraftId) {
+                // Auto-fill the aircraft ID input
+                aircraftIdInput.value = data.aircraftId;
+                
+                // Automatically check the interior
+                checkInterior();
+                
+                // Show success message
+                resultsDiv.innerHTML = `<div class="success-message">Found aircraft ID: ${data.aircraftId}</div>`;
+            } else {
+                throw new Error('Aircraft identifier not found');
+            }
+        } catch (error) {
+            console.error('Error fetching aircraft ID:', error);
+            showError(`Error: ${error.message}. You may need to check manually on United's website.`);
+            
+            // Construct URL for manual checking
+            const flightNumberWithoutUA = flightNumber.substring(2);
+            const unitedUrl = `https://www.united.com/en/us/flightstatus/details/${flightNumberWithoutUA}/${date}/${departureAirport}/${arrivalAirport}/UA`;
+            
+            // Add a link to check manually
+            resultsDiv.innerHTML += `<div class="manual-check">
+                <a href="${unitedUrl}" target="_blank">Check on United's website</a>
+            </div>`;
+        }
     }
 
     async function checkInterior() {
@@ -91,8 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        loadingDiv.classList.remove('hidden');
-        resultsDiv.innerHTML = '';
+        showLoading('Checking aircraft interior...');
 
         try {
             const response = await fetch('/api/check-interior', {
@@ -266,9 +322,5 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Error updating recent searches UI:', error);
         }
-    }
-
-    function showError(message) {
-        resultsDiv.innerHTML = `<p class="error-message">${message}</p>`;
     }
 });
