@@ -155,7 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Show loading state
-        showLoading('Fetching aircraft identifier...');
+        showLoading('Fetching aircraft identifier from FlightAware...');
         
         // Generate cache key
         const cacheKey = `flight_${flightNumber}_${date}_${departureAirport}_${arrivalAirport}`;
@@ -175,6 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
             resultsDiv.innerHTML = `
                 <div class="success-message">
                     <div>Found aircraft ID: ${cachedData.aircraftId}</div>
+                    <div class="registration-info">Registration: ${cachedData.registration || 'Unknown'}</div>
                     <div class="cached-info">(Cached data)</div>
                 </div>`;
             
@@ -183,7 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            // Call our API endpoint to get the aircraft ID
+            // Call our API endpoint to get the aircraft ID (now using FlightAware)
             const response = await fetchWithRetry('/api/get-aircraft-id', {
                 method: 'POST',
                 headers: {
@@ -200,11 +201,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             
             if (!response.ok) {
-                // Handle specific error cases
-                if (response.status === 429) {
-                    throw new Error('United.com is temporarily blocking our requests. Please try checking manually or enter the aircraft ID directly.');
-                } else if (response.status === 403) {
-                    throw new Error('United.com has detected our automated system. Please try checking manually.');
+                // Handle specific error cases related to FlightAware API
+                if (response.status === 404) {
+                    throw new Error(`${data.error || 'Flight information not found'}. The flight may be too far in the future or not in FlightAware's database.`);
+                } else if (response.status === 429) {
+                    throw new Error('FlightAware API rate limit reached. Please try again in a few minutes.');
                 } else {
                     throw new Error(data.error || 'Failed to retrieve aircraft identifier');
                 }
@@ -217,11 +218,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Auto-fill the aircraft ID input
                 aircraftIdInput.value = data.aircraftId;
                 
-                // Automatically check the interior
-                checkInterior();
+                // Show success message with additional info from FlightAware
+                const registrationInfo = data.registration ? 
+                    `<div class="registration-info">Registration: ${data.registration}</div>` : '';
                 
-                // Show success message
-                resultsDiv.innerHTML = `<div class="success-message">Found aircraft ID: ${data.aircraftId}</div>`;
+                const matchTypeInfo = data.matchType ? 
+                    `<div class="match-info">(${data.matchType === 'fuzzy' ? 'Approximate match' : 'Extracted from registration'})</div>` : '';
+                
+                resultsDiv.innerHTML = `
+                    <div class="success-message">
+                        <div>Found aircraft ID: ${data.aircraftId}</div>
+                        ${registrationInfo}
+                        ${matchTypeInfo}
+                    </div>`;
                 
                 // After successful search, save it to recent searches
                 saveRecentSearch('flights', { 
@@ -230,24 +239,27 @@ document.addEventListener('DOMContentLoaded', () => {
                     toAirport: arrivalAirport, 
                     date 
                 });
+                
+                // Automatically check the interior
+                checkInterior();
             } else {
                 throw new Error('Aircraft identifier not found');
             }
         } catch (error) {
             console.error('Error fetching aircraft ID:', error);
             
-            // Construct URL for manual checking
+            // Construct URL for manual checking on FlightAware
             const flightNumberWithoutUA = flightNumber.replace(/^UA/i, '');
-            const unitedUrl = `https://www.united.com/en/us/flightstatus/details/${flightNumberWithoutUA}/${date}/${departureAirport}/${arrivalAirport}/UA`;
+            const faUrl = `https://flightaware.com/live/flight/UAL${flightNumberWithoutUA}/history/${date.replace(/-/g, '')}/KLAX/KDEN`;
             
             // Provide helpful instructions for manual checking
             const manualInstructions = `
                 <div class="manual-instructions">
                     <h3>How to manually find your aircraft ID:</h3>
                     <ol>
-                        <li>Click on "Check on United's website" below</li>
-                        <li>Look for "Aircraft Details" on the flight status page</li>
-                        <li>Find the number after the # symbol (e.g., #1234)</li>
+                        <li>Click on "Check on FlightAware" below</li>
+                        <li>Look for the "Aircraft" information on the flight details page</li>
+                        <li>Look for the registration number (e.g., N12345)</li>
                         <li>Enter that number in the "Aircraft ID" field above</li>
                         <li>Click "Check Interior" button</li>
                     </ol>
@@ -256,8 +268,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Show error with suggestions and manual instructions
             showError(`${error.message}`, [
-                `<a href="${unitedUrl}" target="_blank" class="manual-link">Check on United's website</a>`,
-                'Enter the aircraft ID manually when you find it'
+                `<a href="${faUrl}" target="_blank" class="manual-link">Check on FlightAware</a>`,
+                'Enter the aircraft ID manually when you find it',
+                'Try a flight closer to the current date'
             ]);
             
             // Add the manual instructions after the error message
